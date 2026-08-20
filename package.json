@@ -1,0 +1,13 @@
+{
+  "name": "sw-constellation-plugin",
+  "version": "1.0.0",
+  "description": "Plugin sw-exporter : sends specified SWEX commands to Constellation",
+  "main": "sw-constellation-plugin.js",
+  "keywords": [
+    "sw-exporter",
+    "summoners-war",
+    "constellation",
+    "plugin"
+  ],
+  "license": "MIT"
+}
