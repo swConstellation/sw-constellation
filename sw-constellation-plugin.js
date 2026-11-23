@@ -1,9 +1,9 @@
-// Requires sans préfixe `node:` : compatible SWEX / Electron (require() au chargement).
-const http = require('http');
-const https = require('https');
-const { URL } = require('url');
-const fs = require('fs');
-const path = require('path');
+// Modules natifs explicites, chargés par le require CommonJS de SWEX / Electron.
+const http = require('node:http');
+const https = require('node:https');
+const { URL } = require('node:url');
+const fs = require('node:fs');
+const path = require('node:path');
 
 /**
  * Plugin SW Constellation API pour sw-exporter (production / open-source).
@@ -24,7 +24,6 @@ const ALLOWED_PLUGIN_CONFIG_KEYS = new Set(['enabled', 'inboundApiKey', 'showLog
  * Aligné sur SwexInboundCommands.PlayerSupported.
  */
 const DEFAULT_PLAYER_COMMANDS = [
-    'GetGuildBlackMarketList',
     'GetWizardInfo',
     'GetWizardData',
     'setGuildSiegeMarkDefenseDeck',
@@ -46,7 +45,6 @@ const DEFAULT_FULL_COMMANDS = [
     'GetGuildSiegeAttackUnitInfoInBattle',
     'GetGuildSiegeBattleReplayData',
     'GetGuildSiegeParticipationInfo',
-    'GetGuildBlackMarketList',
     'GetWizardInfo',
     'GetWizardData',
     'UpdateAlive',
@@ -223,7 +221,7 @@ function makePluginLogger(proxy, showLogs) {
 function httpGetJson(urlObj, extraHeaders) {
     return new Promise((resolve, reject) => {
         const httpModuleLocal = urlObj.protocol === 'https:' ? https : http;
-        const headers = { Accept: 'application/json', ...(extraHeaders || {}) };
+        const headers = { Accept: 'application/json', ...extraHeaders };
         const options = {
             hostname: urlObj.hostname,
             port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
@@ -342,9 +340,8 @@ module.exports = {
             try {
                 const req = args.length >= 2 ? args[0] : null;
                 const resp = args.length >= 2 ? args[1] : args[0];
-                const profile = (resp && resp.building_list) ? resp
-                    : (req && req.building_list) ? req
-                    : resp;
+                let profile = resp;
+                if (!resp?.building_list && req?.building_list) profile = req;
                 noteSessionWizardId(extractWizardId(profile) || extractWizardId(resp) || extractWizardId(req));
                 handleProfileExport(profile, pLogger, inboundApiKey);
             } catch (err) {
@@ -498,7 +495,6 @@ function handleProfileExport(resp, pLogger, inboundApiKey) {
     }
 
     const wizardId = resp?.wizard_info?.wizard_id;
-    const wizardName = resp?.wizard_info?.wizard_name || 'wizard';
     if (!wizardId) {
         log.warn('[SW Constellation API] Import profil ignoré : wizard_id manquant');
         return;
@@ -515,7 +511,10 @@ function handleProfileExport(resp, pLogger, inboundApiKey) {
         return;
     }
 
-    const fileName = sanitizeFileName(`${wizardName}-${wizardId}.json`);
+    const wizardIdText = String(wizardId);
+    const fileName = /^[0-9]{1,19}$/.test(wizardIdText)
+        ? `swex-profile-${wizardIdText}.json`
+        : 'swex-profile.json';
     const jsonPayload = JSON.stringify(resp);
 
     let endpointUrl;
@@ -562,8 +561,4 @@ function handleProfileExport(resp, pLogger, inboundApiKey) {
     });
     req.write(jsonPayload);
     req.end();
-}
-
-function sanitizeFileName(name) {
-    return String(name).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
 }
