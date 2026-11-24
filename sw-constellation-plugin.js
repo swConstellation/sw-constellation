@@ -13,6 +13,7 @@ const path = require('node:path');
  */
 
 const CONSTELLATION_API_URL = 'https://api.swc.gg';
+const PROFILE_IMPORT_TIMEOUT_MS = 300_000;
 /** En-tête HTTP fixe (pas une option plugin). La valeur est l'InboundApiKey membre. */
 const INBOUND_API_KEY_HEADER = 'X-Constellation-Guild-Key';
 
@@ -537,28 +538,47 @@ function handleProfileExport(resp, pLogger, inboundApiKey) {
         port: endpointUrl.port || (endpointUrl.protocol === 'https:' ? 443 : 80),
         path: (endpointUrl.pathname || '') + (endpointUrl.search || ''),
         method: 'POST',
-        headers,
-        timeout: 60000
+        headers
     };
 
-    const httpModuleLocal = endpointUrl.protocol === 'https:' ? https : http;
-    const req = httpModuleLocal.request(options, (res) => {
-        res.on('data', () => { });
+    const startTime = Date.now();
+    const elapsedSeconds = () => ((Date.now() - startTime) / 1000).toFixed(1);
+    let stage = 'connexion';
+    const req = https.request(options, (res) => {
+        stage = 'lecture de la réponse';
+        res.on('error', (error) => req.destroy(error));
         res.on('end', () => {
+            clearTimeout(deadline);
+            const trace = res.headers['x-request-id'];
+            const details = 'HTTP ' + res.statusCode + ', ' + elapsedSeconds() + ' s'
+                + (trace ? ', requête ' + trace : '');
             if (res.statusCode >= 200 && res.statusCode < 300) {
-                log.info(`[SW Constellation API] Import profil envoyé avec succès (${res.statusCode})`);
+                log.info('[SW Constellation API] Import profil réussi (' + details + ')');
             } else {
-                log.warn(`[SW Constellation API] Import profil échec (${res.statusCode})`);
+                log.warn('[SW Constellation API] Import profil refusé (' + details + ')');
             }
         });
+        res.resume();
     });
-    req.on('timeout', () => {
-        req.destroy(new Error('timeout'));
-        log.warn('[SW Constellation API] Import profil échec : timeout');
+    const deadline = setTimeout(() => {
+        const error = new Error('délai dépassé');
+        error.code = 'ETIMEDOUT';
+        req.destroy(error);
+    }, PROFILE_IMPORT_TIMEOUT_MS);
+    deadline.unref();
+    req.on('socket', (socket) => {
+        stage = 'envoi du JSON';
+        if (socket.connecting) {
+            stage = 'connexion';
+            socket.once('secureConnect', () => { stage = 'envoi du JSON'; });
+        }
     });
-    req.on('error', () => {
-        log.warn('[SW Constellation API] Import profil échec réseau');
+    req.once('finish', () => { stage = 'attente de la réponse'; });
+    req.once('error', (error) => {
+        clearTimeout(deadline);
+        const reason = error.code || error.name || 'erreur réseau';
+        log.warn('[SW Constellation API] Import profil interrompu (' + reason + ', '
+            + stage + ', ' + elapsedSeconds() + ' s)');
     });
-    req.write(jsonPayload);
-    req.end();
+    req.end(jsonPayload);
 }
